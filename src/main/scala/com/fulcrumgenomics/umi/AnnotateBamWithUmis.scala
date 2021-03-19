@@ -37,12 +37,14 @@ import com.fulcrumgenomics.FgBioDef.BetterBufferedIteratorScalaWrapper
 @clp(description =
   """
     |Annotates existing BAM files with UMIs (Unique Molecular Indices, aka Molecular IDs,
-    |Molecular barcodes) from a separate FASTQ file. Takes an existing BAM file and a FASTQ
-    |file consisting of UMI reads, matches the reads between the files based on read names,
+    |Molecular barcodes) from  separate FASTQ files. Takes an existing BAM file and one or more FASTQ
+    |files consisting of UMI reads, matches the reads between the files based on read names,
     |and produces an output BAM file where each record is annotated with an optional tag
     |(specified by `attribute`) that contains the read sequence of the UMI.  Trailing read
     |numbers (`/1` or `/2`) are removed from FASTQ read names, as is any text after whitespace,
-    |before matching.
+    |before matching. If multiple UMI segments are specified (see `--read-structure`) across one
+    |or more FASTQs, they are delimited in the same order as FASTQs are specified on the command
+    |line.  The delimiter is controlled by the `--delimiter` option.
     |
     |The `--read-structure` option may be used to specify which bases in the FASTQ contain UMI
     |bases.  Otherwise it is assumed the FASTQ contains only UMI bases.
@@ -56,22 +58,33 @@ import com.fulcrumgenomics.FgBioDef.BetterBufferedIteratorScalaWrapper
     |may be specified to cause the program to terminate the first time it finds a records
     |without a matching UMI.
     |
-    |In order to avoid sorting the input files, the entire UMI fastq file is read into
+    |In order to avoid sorting the input files, the entire UMI fastq file(s) is read into
     |memory. As a result the program needs to be run with memory proportional the size of
-    |the (uncompressed) fastq.
+    |the (uncompressed) fastq(s).
   """,
   group = ClpGroups.SamOrBam)
 class AnnotateBamWithUmis(
   @arg(flag='i', doc="The input SAM or BAM file.")             val input: PathToBam,
-  @arg(flag='f', doc="Input FASTQ file with UMI reads.")       val fastq: PathToFastq,
+  @arg(flag='f', doc="Input FASTQ(s) with UMI reads.")         val fastq: Seq[PathToFastq],
   @arg(flag='o', doc="Output BAM file to write.")              val output: PathToBam,
   @arg(flag='t', doc="The BAM attribute to store UMIs in.")    val attribute: String = "RX",
   @arg(flag='r', doc="The read structure for the FASTQ, otherwise all bases will be used.")
-                                                               val readStructure: ReadStructure = ReadStructure("+M"),
+                                                               val readStructure: Seq[ReadStructure] = Seq(ReadStructure("+M")),
   @arg(flag='s', doc="Whether the FASTQ file is sorted in the same order as the BAM.")
                                                                val sorted: Boolean = false,
-  @arg(          doc="If set, fail on the first missing UMI.") val failFast: Boolean = false,
+  @arg(flag='d', doc="The UMI delimiter")                      val delimiter: String = "-",
+  @arg(          doc="If set, fail on the first missing UMI.") val failFast: Boolean = false
 ) extends FgBioTool with LazyLogging {
+
+  Io.assertReadable(Seq(input) ++ fastq)
+  Io.assertCanWriteFile(output)
+  validate(readStructure.length == 1 || readStructure.length == fastq.length,
+    "The number of read structures must match the number of FASTQs, or only a single read structure must be given"
+  )
+  private val structures: Seq[ReadStructure] = {
+    if (readStructure.length == fastq.length) readStructure
+    else Seq.tabulate(3)(_ => readStructure.head)
+  }
 
   private var missingUmis: Long = 0
 
@@ -82,22 +95,18 @@ class AnnotateBamWithUmis(
   }
 
   /** Extracts the UMI bases given the read structure */
-  private def extractUmis(bases: String, structure: ReadStructure): String = {
+  private def extractUmis(bases: String, structure: ReadStructure): Seq[String] = {
     structure
       .extract(bases)
       .filter(_.kind == SegmentType.MolecularBarcode)
       .map(_.bases)
-      .mkString("")
   }
 
   /** Main method that does the work of reading input files, matching up reads and writing the output file. */
   override def execute(): Unit = {
-    Io.assertReadable(Seq(input, fastq))
-    Io.assertCanWriteFile(output)
-
     // Read in the fastq file
     logger.info("Reading in UMIs from FASTQ.")
-    val fqIn     = FastqSource(fastq)
+    val fqSources = fastq.map(FastqSource.apply)
 
     logger.info("Reading input BAM and annotating output BAM.")
     val in       = SamSource(input)
@@ -107,10 +116,12 @@ class AnnotateBamWithUmis(
     if (sorted) {
       // Loop through fastq and annotate corresponding BAM entries
       val samIter = in.iterator.bufferBetter
-      fqIn.foreach { fqRec =>
-        val records = samIter.takeWhile(_.name == fqRec.name).toIndexedSeq
-        if (records.isEmpty) logMissingUmi(fqRec.name) else {
-          val umi = extractUmis(fqRec.bases, structure=readStructure)
+      FastqSource.zipped(sources=fqSources).foreach { fqRecs =>
+        val records = samIter.takeWhile(_.name == fqRecs.head.name).toIndexedSeq
+        if (records.isEmpty) logMissingUmi(fqRecs.head.name) else {
+          val umi = fqRecs.zip(structures).flatMap { case (fq, structure) =>
+            extractUmis(bases=fq.bases, structure=structure)
+          }.mkString(delimiter)
           records.foreach { rec =>
             rec(attribute) = umi
             out += rec
@@ -118,13 +129,20 @@ class AnnotateBamWithUmis(
           }
         }
       }
+      fqSources.foreach(_.close())
       samIter.foreach { rec =>
         logMissingUmi(rec.name)
         progress.record(rec)
       }
     } else {
+      val nameToUmi = FastqSource.zipped(sources=fqSources).map { records =>
+        val umi = records.zip(structures).flatMap { case (fq, structure) =>
+          extractUmis(bases=fq.bases, structure=structure)
+        }.mkString(delimiter)
+        (records.head.name, umi)
+      }.toMap
+      fqSources.foreach(_.close())
       // Loop through the BAM file an annotate it
-      val nameToUmi = fqIn.map(fq => (fq.name, extractUmis(fq.bases, readStructure))).toMap
       in.foreach { rec => 
         val name = rec.name
         nameToUmi.get(name) match {

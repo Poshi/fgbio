@@ -40,9 +40,9 @@ class AnnotateBamWithUmisTest extends UnitSpec {
   private val fq     = dir.resolve("annotate_umis.fastq")
   private val umiTag = "RX"
 
-  "AnnotateBamWithUmis" should "successfully add UMIs to a BAM in" in {
-    val out       = makeTempFile("with_umis.", ".bam")
-    val annotator = new AnnotateBamWithUmis(input=sam, fastq=fq, output=out, attribute=umiTag)
+  "AnnotateBamWithUmis" should "successfully add UMIs to a BAM" in {
+    val out = makeTempFile("with_umis.", ".bam")
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(fq), output=out, attribute=umiTag)
     annotator.execute()
     SamSource(out).foreach(rec => {
       rec[String](umiTag) shouldBe rec.basesString.substring(0,8)
@@ -51,7 +51,7 @@ class AnnotateBamWithUmisTest extends UnitSpec {
 
   it should "successfully add UMIs to a BAM in when the fastq is sorted" in {
     val out       = makeTempFile("with_umis.", ".bam")
-    val annotator = new AnnotateBamWithUmis(input=sam, fastq=fq, output=out, attribute=umiTag, sorted=true)
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(fq), output=out, attribute=umiTag, sorted=true)
     annotator.execute()
     SamSource(out).foreach(rec => {
       rec[String](umiTag) shouldBe rec.basesString.substring(0,8)
@@ -62,7 +62,7 @@ class AnnotateBamWithUmisTest extends UnitSpec {
     val out     = makeTempFile("with_umis.", ".bam")
     val shortFq = makeTempFile("missing_umis.", ".fq.gz")
     Io.writeLines(shortFq, Io.readLines(fq).toSeq.dropRight(8))
-    val annotator = new AnnotateBamWithUmis(input=sam, fastq=shortFq, output=out, attribute=umiTag)
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(shortFq), output=out, attribute=umiTag)
     an[FailureException] shouldBe thrownBy { annotator.execute() }
   }
 
@@ -70,7 +70,7 @@ class AnnotateBamWithUmisTest extends UnitSpec {
     val out     = makeTempFile("with_umis.", ".bam")
     val shortFq = makeTempFile(s"missing_umis.", ".fq.gz")
     Io.writeLines(shortFq, Io.readLines(fq).toSeq.dropRight(8))
-    val annotator = new AnnotateBamWithUmis(input=sam, fastq=shortFq, output=out, attribute=umiTag, sorted=true)
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(shortFq), output=out, attribute=umiTag, sorted=true)
     an[FailureException] shouldBe thrownBy { annotator.execute() }
   }
 
@@ -79,16 +79,38 @@ class AnnotateBamWithUmisTest extends UnitSpec {
     val longFq = makeTempFile(s"extra_umis.", ".fq.gz")
     Io.writeLines(longFq, Io.readLines(fq))
     Io.writeLines(longFq, Seq("@not_a_flowcell:1:1101:10060:3200/2 2:N:0:19","GATCTTGG","+","-,86,,;:"))
-    val annotator = new AnnotateBamWithUmis(input=sam, fastq=longFq, output=out, attribute=umiTag, sorted=true)
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(longFq), output=out, attribute=umiTag, sorted=true)
     an[FailureException] shouldBe thrownBy { annotator.execute() }
   }
 
   it should "successfully add UMIs to a BAM with a given read structure in" in {
-    val out       = makeTempFile("with_umis.", ".bam")
-    val annotator = new AnnotateBamWithUmis(input=sam, fastq=fq, output=out, attribute=umiTag, readStructure=ReadStructure("2B4M+B"))
+    val out = makeTempFile("with_umis.", ".bam")
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(fq), output=out, attribute=umiTag, readStructure=Seq(ReadStructure("2B4M+B")))
     annotator.execute()
     SamSource(out).foreach(rec => {
-      rec[String](umiTag) shouldBe rec.basesString.substring(2,6)
+      rec[String](umiTag) shouldBe rec.basesString.substring(2, 6)
     })
+  }
+
+  it should "successfully add UMIs to a BAM using all bases from multiple FASTQs" in {
+    val out = makeTempFile("with_umis.", ".bam")
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(fq, fq), readStructure=Seq(ReadStructure("2B+M")), output=out, attribute=umiTag, delimiter="x")
+    annotator.execute()
+    SamSource(out).foreach { rec =>
+      val bases = rec.basesString.substring(2,8)
+      rec[String](umiTag) shouldBe s"${bases}x${bases}"
+    }
+  }
+
+  it should "successfully add UMIs to a BAM with multiple FASTQs and corresponding read structures" in {
+    val out = makeTempFile("with_umis.", ".bam")
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(fq, fq), readStructure=Seq(ReadStructure("2M4B+M"), ReadStructure("1B+M")), output=out, attribute=umiTag, delimiter="x")
+    annotator.execute()
+    SamSource(out).foreach { rec =>
+      val first  = rec.basesString.substring(0,2) // read one: [2M]4B+M
+      val second = rec.basesString.substring(6,8) // read one: 2M4B[+M]
+      val third  = rec.basesString.substring(1,8) // read two: 1B[+M]
+      rec[String](umiTag) shouldBe s"${first}x${second}x${third}"
+    }
   }
 }
