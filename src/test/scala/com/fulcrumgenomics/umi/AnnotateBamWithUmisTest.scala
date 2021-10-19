@@ -92,6 +92,14 @@ class AnnotateBamWithUmisTest extends UnitSpec {
     })
   }
 
+  it should "fail to add UMIs to a BAM wiht one unsorted FASTQ and corresponding read structures when sorted is true" in {
+    val out = makeTempFile("with_umis.", ".bam")
+    val reverseFq = makeTempFile(s"reverse_umis.", ".fq.gz")
+    Io.writeLines(reverseFq, Io.readLines(fq).grouped(4).toSeq.reverse.flatten)
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(reverseFq), output=out, attribute=umiTag, readStructure=Seq(ReadStructure("2M4B+M")), sorted=true)
+    an[FailureException] shouldBe thrownBy { annotator.execute() }
+  }
+
   it should "successfully add UMIs to a BAM using all bases from multiple FASTQs" in {
     val out = makeTempFile("with_umis.", ".bam")
     val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(fq, fq), readStructure=Seq(ReadStructure("2B+M")), output=out, attribute=umiTag, delimiter="x")
@@ -112,5 +120,42 @@ class AnnotateBamWithUmisTest extends UnitSpec {
       val third  = rec.basesString.substring(1,8) // read two: 1B[+M]
       rec[String](umiTag) shouldBe s"${first}x${second}x${third}"
     }
+  }
+
+  it should "successfully add UMIs to a BAM with multiple FASTQs and corresponding read structures when sorted is true" in {
+    val out = makeTempFile("with_umis.", ".bam")
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(fq, fq), readStructure=Seq(ReadStructure("2M4B+M"), ReadStructure("1B+M")), output=out, attribute=umiTag, delimiter="x", sorted=true)
+    annotator.execute()
+    SamSource(out).foreach { rec =>
+      val first  = rec.basesString.substring(0,2) // read one: [2M]4B+M
+      val second = rec.basesString.substring(6,8) // read one: 2M4B[+M]
+      val third  = rec.basesString.substring(1,8) // read two: 1B[+M]
+      rec[String](umiTag) shouldBe s"${first}x${second}x${third}"
+    }
+  }
+
+  it should "fail to add UMIs to a BAM with multiple truncated FASTQs and corresponding read structures when sorted is true" in {
+    val out = makeTempFile("with_umis.", ".bam")
+    val shortFq = makeTempFile(s"missing_umis.", ".fq.gz")
+    Io.writeLines(shortFq, Io.readLines(fq).toSeq.dropRight(8))
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(shortFq, shortFq), readStructure=Seq(ReadStructure("2M4B+M"), ReadStructure("1B+M")), output=out, attribute=umiTag, delimiter="x", sorted=true)
+    an[FailureException] shouldBe thrownBy { annotator.execute() }
+  }
+
+  it should "fail to add UMIs to a BAM with multiple unsorted FASTQs and corresponding read structures when sorted is true" in {
+    val out = makeTempFile("with_umis.", ".bam")
+    val reverseFq = makeTempFile(s"reverse_umis.", ".fq.gz")
+    Io.writeLines(reverseFq, Io.readLines(fq).grouped(4).toSeq.reverse.flatten)
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(reverseFq, reverseFq), readStructure=Seq(ReadStructure("2M4B+M"), ReadStructure("1B+M")), output=out, attribute=umiTag, delimiter="x", sorted=true)
+    an[FailureException] shouldBe thrownBy { annotator.execute() }
+  }
+
+  it should "fail to add UMIs to a BAM with multiple FASTQs with extra lines and corresponding read structures when sorted is true" in {
+    val out = makeTempFile("with_umis.", ".bam")
+    val longFq = makeTempFile(s"extra_umis.", ".fq.gz")
+    Io.writeLines(longFq, Io.readLines(fq))
+    Io.writeLines(longFq, Seq("@not_a_flowcell:1:1101:10060:3200/2 2:N:0:19","GATCTTGG","+","-,86,,;:"))
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(longFq, longFq), readStructure=Seq(ReadStructure("2M4B+M"), ReadStructure("1B+M")), output=out, attribute=umiTag, delimiter="x", sorted=true)
+    an[FailureException] shouldBe thrownBy { annotator.execute() }
   }
 }
