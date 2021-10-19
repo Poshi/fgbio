@@ -37,14 +37,15 @@ import com.fulcrumgenomics.FgBioDef.BetterBufferedIteratorScalaWrapper
 @clp(description =
   """
     |Annotates existing BAM files with UMIs (Unique Molecular Indices, aka Molecular IDs,
-    |Molecular barcodes) from  separate FASTQ files. Takes an existing BAM file and one or more FASTQ
-    |files consisting of UMI reads, matches the reads between the files based on read names,
-    |and produces an output BAM file where each record is annotated with an optional tag
-    |(specified by `attribute`) that contains the read sequence of the UMI.  Trailing read
-    |numbers (`/1` or `/2`) are removed from FASTQ read names, as is any text after whitespace,
-    |before matching. If multiple UMI segments are specified (see `--read-structure`) across one
-    |or more FASTQs, they are delimited in the same order as FASTQs are specified on the command
-    |line.  The delimiter is controlled by the `--delimiter` option.
+    |Molecular barcodes) from separate FASTQ files. Takes an existing BAM file and either
+    |one FASTQ file with UMI reads or multiple FASTQs if there are multiple UMIs per template,
+    |matches the reads between the files based on read names, and produces an output BAM file
+    |where each record is annotated with an optional tag (specified by `attribute`) that
+    |contains the read sequence of the UMI.  Trailing read numbers (`/1` or `/2`) are
+    |removed from FASTQ read names, as is any text after whitespace, before matching.
+    |If multiple UMI segments are specified (see `--read-structure`) across one or more FASTQs,
+    |they are delimited in the same order as FASTQs are specified on the command line.
+    |The delimiter is controlled by the `--delimiter` option.
     |
     |The `--read-structure` option may be used to specify which bases in the FASTQ contain UMI
     |bases.  Otherwise it is assumed the FASTQ contains only UMI bases.
