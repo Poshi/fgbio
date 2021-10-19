@@ -158,4 +158,14 @@ class AnnotateBamWithUmisTest extends UnitSpec {
     val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(longFq, longFq), readStructure=Seq(ReadStructure("2M4B+M"), ReadStructure("1B+M")), output=out, attribute=umiTag, delimiter="x", sorted=true)
     an[FailureException] shouldBe thrownBy { annotator.execute() }
   }
+
+  it should "fail if FASTQs are not sorted the same" in {
+    val out = makeTempFile("with_umis.", ".bam")
+    val reverseFq = makeTempFile(s"reverse_umis.", ".fq.gz")
+    Io.writeLines(reverseFq, Io.readLines(fq).grouped(4).toSeq.reverse.flatten)
+    val annotator = new AnnotateBamWithUmis(input=sam, fastq=Seq(fq, reverseFq), readStructure=Seq(ReadStructure("2M4B+M"), ReadStructure("1B+M")), output=out, attribute=umiTag, delimiter="x", sorted=true)
+    val result = intercept[Exception] { annotator.execute() }
+    println(result)
+    result.getMessage should include ("out of sync")
+  }
 }
